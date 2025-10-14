@@ -1,6 +1,3 @@
-
-
-# !/usr/bin/env python
 # !/usr/bin/env python
 import sys
 import os
@@ -71,24 +68,22 @@ def parse_args(args, parser):
     return all_args
 
 
-
-
 def main(args):
     parser = get_config()
     all_args = parse_args(args, parser)
 
-    if all_args.algorithm_name == "rmappo":
-        assert all_args.use_recurrent_policy or all_args.use_naive_recurrent_policy, "check recurrent policy!"
-    elif all_args.algorithm_name == "mappo":
-        assert (
-            all_args.use_recurrent_policy == False and all_args.use_naive_recurrent_policy == False
-        ), "check recurrent policy!"
-    else:
-        raise NotImplementedError
+    # if all_args.algorithm_name == "rmappo":
+    #     assert all_args.use_recurrent_policy or all_args.use_naive_recurrent_policy, "check recurrent policy!"
+    # elif all_args.algorithm_name == "mappo":
+    #     assert (
+    #         all_args.use_recurrent_policy == False and all_args.use_naive_recurrent_policy == False
+    #     ), "check recurrent policy!"
+    # else:
+    #     raise NotImplementedError
 
-    assert (
-        all_args.share_policy == True and all_args.scenario_name == "simple_speaker_listener"
-    ) == False, "The simple_speaker_listener scenario can not use shared policy. Please check the config.py."
+    # assert (
+    #     all_args.share_policy == True and all_args.scenario_name == "simple_speaker_listener"
+    # ) == False, "The simple_speaker_listener scenario can not use shared policy. Please check the config.py."
 
     # cuda
     if all_args.cuda and torch.cuda.is_available():
@@ -179,3 +174,4 @@ def main(args):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
