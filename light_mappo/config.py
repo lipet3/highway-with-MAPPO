@@ -179,12 +179,16 @@ def get_config():
         default=True,
         help="by default, make sure random seed effective. if set, bypass such function.",
     )
+
+    #   ---------------------------------
     parser.add_argument(
         "--n_training_threads",
         type=int,
-        default=2,
+        default=4,
         help="Number of torch threads for training",
     )
+
+
     parser.add_argument(
         "--n_rollout_threads",
         type=int,
@@ -203,12 +207,17 @@ def get_config():
         default=1,
         help="Number of parallel envs for rendering rollouts",
     )
+
+    #   ---------------------------------
+    #   ---------------------------------
     parser.add_argument(
         "--num_env_steps",
         type=int,
-        default=10e6,
+        default=10e4,
         help="Number of environment steps to train (default: 10e6)",
     )
+    #   ---------------------------------
+
     parser.add_argument(
         "--user_name",
         type=str,
@@ -232,8 +241,10 @@ def get_config():
     #     help="Whether to use global state or concatenated obs",
     # )
 
+    #   ---------------------------------
     # replay buffer parameters
     parser.add_argument("--episode_length", type=int, default=200, help="Max length for any episode")
+    #   ---------------------------------
 
     # network parameters
     # parser.add_argument(
@@ -478,7 +489,7 @@ def get_config():
     parser.add_argument(
         "--save_gifs",
         action="store_true",
-        default=False,
+        default=True,
         help="by default, do not save render video. If set, save video.",
     )
     parser.add_argument(
@@ -509,3 +520,4 @@ def get_config():
     )
 
     return parser
+
