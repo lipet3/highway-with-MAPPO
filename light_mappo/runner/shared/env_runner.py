@@ -9,8 +9,9 @@ import time
 import numpy as np
 import torch
 from runner.shared.base_runner import Runner
+import os
+import imageio
 
-# import imageio
 
 
 def _t2n(x):
@@ -76,18 +77,19 @@ class EnvRunner(Runner):
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
-                print(
-                    "\n Scenario {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n".format(
-                        self.all_args.scenario_name,
-                        self.algorithm_name,
-                        self.experiment_name,
-                        episode,
-                        episodes,
-                        total_num_steps,
-                        self.num_env_steps,
-                        int(total_num_steps / (end - start)),
-                    )
-                )
+                # print(
+                #     "\n Scenario {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n".format(
+                #         self.all_args.scenario_name,
+                #         self.algorithm_name,
+                #         self.experiment_name,
+                #         episode,
+                #         episodes,
+                #         total_num_steps,
+                #         self.num_env_steps,
+                #         int(total_num_steps / (end - start)),
+                #     )
+                # )
+
 
                 # if self.env_name == "MPE":
                 #     env_infos = {}
@@ -100,7 +102,7 @@ class EnvRunner(Runner):
                 #         env_infos[agent_k] = idv_rews
 
                 train_infos["average_episode_rewards"] = np.mean(self.buffer.rewards) * self.episode_length
-                print("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
+                # print("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
                 self.log_train(train_infos, total_num_steps)
                 # self.log_env(env_infos, total_num_steps)
 
@@ -279,11 +281,24 @@ class EnvRunner(Runner):
         """Visualize the env."""
         envs = self.envs
 
+        # ✅ 兜底创建 gif_dir（训练外单独渲染时 base_runner 可能没初始化）
+        if getattr(self.all_args, "save_gifs", False) and not hasattr(self, "gif_dir"):
+            base_dir = str(self.run_dir) if getattr(self, "run_dir", None) is not None else "."
+            self.gif_dir = os.path.join(base_dir, "gifs")
+            os.makedirs(self.gif_dir, exist_ok=True)
+
+
         all_frames = []
         for episode in range(self.all_args.render_episodes):
-            obs = envs.reset()
+            try:
+                # 每个回合换一个 seed，确保初始条件不同
+                obs = envs.reset(seed=int(getattr(self.all_args, "seed", 1)) + episode * 1000)
+            except TypeError:
+                # 若 DummyVecEnv.reset 不支持 seed 形参就回退
+                obs = envs.reset()
+
             if self.all_args.save_gifs:
-                image = envs.render("rgb_array")[0][0]
+                image = envs.render("rgb_array")[0]
                 all_frames.append(image)
             else:
                 envs.render("human")
@@ -328,6 +343,11 @@ class EnvRunner(Runner):
 
                 # Obser reward and next obs
                 obs, rewards, dones, infos = envs.step(actions_env)
+
+                # 提前结束本回合：所有并行环境都 done 就停
+                if np.all(dones):
+                    break
+
                 episode_rewards.append(rewards)
 
                 rnn_states[dones == True] = np.zeros(
@@ -338,7 +358,7 @@ class EnvRunner(Runner):
                 masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
 
                 if self.all_args.save_gifs:
-                    image = envs.render("rgb_array")[0][0]
+                    image = envs.render("rgb_array")[0]
                     all_frames.append(image)
                     calc_end = time.time()
                     elapsed = calc_end - calc_start
@@ -347,7 +367,10 @@ class EnvRunner(Runner):
                 else:
                     envs.render("human")
 
-            print("average episode rewards is: " + str(np.mean(np.sum(np.array(episode_rewards), axis=0))))
+            # print("average episode rewards is: " + str(np.mean(np.sum(np.array(episode_rewards), axis=0))))
 
-        # if self.all_args.save_gifs:
-        #     imageio.mimsave(str(self.gif_dir) + '/render.gif', all_frames, duration=self.all_args.ifi)
+        if self.all_args.save_gifs and len(all_frames) > 0:
+            os.makedirs(self.gif_dir, exist_ok=True)
+            imageio.mimsave(str(self.gif_dir) + '/render.gif', all_frames, duration=self.all_args.ifi)
+
+
