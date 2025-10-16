@@ -33,48 +33,78 @@ class SharedReplayBuffer(object):
         self._use_valuenorm = args.use_valuenorm
         self._use_proper_time_limits = args.use_proper_time_limits
 
-        obs_shape = get_shape_from_obs_space(obs_space)
-        share_obs_shape = get_shape_from_obs_space(cent_obs_space)
+        # --- 取空间形状并规范成一维 (dim,) ---
+        obs_shape_raw = get_shape_from_obs_space(obs_space)
+        share_obs_shape_raw = get_shape_from_obs_space(cent_obs_space)
 
-        if type(obs_shape[-1]) == list:
-            obs_shape = obs_shape[:1]
+        def _to_1d_tuple(shape):
+            # (28,), [28] -> (28,)
+            # (K,F) 或 [K,F] -> (K*F,)
+            if isinstance(shape, (list, tuple)):
+                if len(shape) == 1 and not isinstance(shape[0], (list, tuple)):
+                    return (int(shape[0]),)
+                return (int(np.prod(shape)),)
+            return (int(shape),)
 
-        if type(share_obs_shape[-1]) == list:
-            share_obs_shape = share_obs_shape[:1]
+        obs_shape = _to_1d_tuple(obs_shape_raw)                # -> (D',)
+        share_obs_shape = _to_1d_tuple(share_obs_shape_raw)    # -> (A*D',)
 
-        self.share_obs = np.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, *share_obs_shape),
-                                  dtype=np.float32)
-        self.obs = np.zeros((self.episode_length + 1, self.n_rollout_threads, num_agents, *obs_shape), dtype=np.float32)
+        # --- 维度校验 ---
+        A = int(num_agents)
+        obs_dim = int(obs_shape[0])            # D' = D + A
+        share_dim = int(share_obs_shape[0])    # A * D'
+        print(f"[DBG][Buffer] A={A}, obs_dim(D')={obs_dim}, share_dim={share_dim}")
+        assert share_dim == A * obs_dim, "share_dim 必须等于 A*obs_dim。请检查 PettingZooWrapper.share_observation_space"
+
+        # --- 存储张量 ---
+        self.share_obs = np.zeros(
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, *share_obs_shape),
+            dtype=np.float32
+        )
+        self.obs = np.zeros(
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, *obs_shape),
+            dtype=np.float32
+        )
 
         self.rnn_states = np.zeros(
             (self.episode_length + 1, self.n_rollout_threads, num_agents, self.recurrent_N, self.hidden_size),
-            dtype=np.float32)
+            dtype=np.float32
+        )
         self.rnn_states_critic = np.zeros_like(self.rnn_states)
 
         self.value_preds = np.zeros(
-            (self.episode_length + 1, self.n_rollout_threads, num_agents, 1), dtype=np.float32)
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, 1), dtype=np.float32
+        )
         self.returns = np.zeros_like(self.value_preds)
 
         if act_space.__class__.__name__ == 'Discrete':
-            self.available_actions = np.ones((self.episode_length + 1, self.n_rollout_threads, num_agents, act_space.n),
-                                             dtype=np.float32)
+            self.available_actions = np.ones(
+                (self.episode_length + 1, self.n_rollout_threads, num_agents, act_space.n),
+                dtype=np.float32
+            )
         else:
             self.available_actions = None
 
         act_shape = get_shape_from_act_space(act_space)
 
         self.actions = np.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32)
+            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32
+        )
         self.action_log_probs = np.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32)
+            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32
+        )
         self.rewards = np.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, 1), dtype=np.float32)
+            (self.episode_length, self.n_rollout_threads, num_agents, 1), dtype=np.float32
+        )
 
-        self.masks = np.ones((self.episode_length + 1, self.n_rollout_threads, num_agents, 1), dtype=np.float32)
+        self.masks = np.ones(
+            (self.episode_length + 1, self.n_rollout_threads, num_agents, 1), dtype=np.float32
+        )
         self.bad_masks = np.ones_like(self.masks)
         self.active_masks = np.ones_like(self.masks)
 
         self.step = 0
+
 
     def insert(self, share_obs, obs, rnn_states_actor, rnn_states_critic, actions, action_log_probs,
                value_preds, rewards, masks, bad_masks=None, active_masks=None, available_actions=None):
