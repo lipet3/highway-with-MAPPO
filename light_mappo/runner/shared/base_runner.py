@@ -62,6 +62,15 @@ class Runner(object):
 
         share_observation_space = self.envs.share_observation_space[0] if self.use_centralized_V else self.envs.observation_space[0]
 
+        # === 新增：维度校验（来自环境空间，动态一致） ===
+        A = self.num_agents
+        obs_shape = self.envs.observation_space[0].shape[0]              # D' = D + A
+        share_obs_shape = share_observation_space.shape[0]               # A * D'
+        print(f"[DBG][BaseRunner] A={A}, obs_shape(D')={obs_shape}, share_obs_shape={share_obs_shape}")
+        assert share_obs_shape == A * obs_shape, "share_obs_shape 必须等于 A*(D')；请检查 PettingZooWrapper.share_observation_space"
+
+
+
         # policy network
         self.policy = Policy(self.all_args,
                             self.envs.observation_space[0],
