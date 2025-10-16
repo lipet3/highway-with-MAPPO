@@ -2,16 +2,50 @@
 from __future__ import annotations
 import numpy as np
 from typing import Tuple, Dict
+import functools
+from gymnasium import spaces
+
 from highway_env import utils
 from highway_env.envs.common.abstract import AbstractEnv
 from highway_env.envs.common.action import Action
+from highway_env.envs.common.observation import ObservationType
 from highway_env.road.road import Road, RoadNetwork
 from highway_env.utils import near_split
 from highway_env.vehicle.controller import ControlledVehicle
 from highway_env.vehicle.kinematics import Vehicle
-import functools
 
 Observation = np.ndarray
+
+
+# ===== 角色 one-hot 包装器（安全：只包观测，不改动力学） =====
+class RoleAugObsWrapper(ObservationType):
+    def __init__(self, env, base_obs: ObservationType):
+        super().__init__(env, config={})
+        self.base = base_obs
+
+    def space(self):
+        sp = self.base.space()
+        # 典型：Tuple[Box,...]，每个 agent 一个 Box
+        if isinstance(sp, spaces.Tuple) and len(sp) > 0 and isinstance(sp[0], spaces.Box):
+            A = len(sp)
+            per = sp[0]
+            flat_dim = int(np.prod(per.shape)) if per.shape is not None else 0
+            new_box = spaces.Box(low=-np.inf, high=np.inf,
+                                 shape=(flat_dim + A,), dtype=np.float32)
+            return spaces.Tuple(tuple(new_box for _ in range(A)))
+        # 兜底：返回原空间（不会启用 concat）
+        return sp
+
+    def observe(self):
+        base = self.base.observe()            # tuple，长度=A
+        A = len(base)
+        roles = np.eye(A, dtype=np.float32)
+        out = []
+        for i in range(A):
+            x = np.asarray(base[i], dtype=np.float32).reshape(-1)
+            out.append(np.concatenate([x, roles[i]], axis=-1))
+        return tuple(out)
+
 
 class MARLEnv(AbstractEnv):
 
@@ -19,8 +53,10 @@ class MARLEnv(AbstractEnv):
     def default_config(cls) -> dict:
         config = super().default_config()
         config.update({
-            "observation": {"type": "MultiAgentObservation", "observation_config": {"type": "Kinematics"}},
-            "action": {"type": "MultiAgentAction", "action_config": {"type": "DiscreteMetaAction"}},
+            "observation": {"type": "MultiAgentObservation",
+                            "observation_config": {"type": "Kinematics"}},
+            "action": {"type": "MultiAgentAction",
+                       "action_config": {"type": "DiscreteMetaAction"}},
             "lanes_count": 2,
             "vehicles_count": 5,
             "controlled_vehicles": 3,
@@ -33,16 +69,27 @@ class MARLEnv(AbstractEnv):
             "reward_speed_range": [0, 30],
             "normalize_reward": False,
             "offroad_terminal": True,
-            # 仅显示相关。不会影响动力学
             "screen_width": 1600,
             "screen_height": 900,
             "scaling": 3.0,
             "centering_position": [0.5, 0.6],
             "lane_change_reward": 100.0,
+
+            # 角色 one-hot 注入方式： "off" | "info" | "concat"
+            # 默认 "info"：只放到 info，不改观测维度，不影响既有训练
+            "role_onehot_mode": "concat",
         })
         return config
 
-    # -------- 回合汇总（原样保留） --------
+    # —— 只在这里接管观测空间，启用 concat 时包一层，不碰其它逻辑 ——
+    def define_spaces(self):
+        super().define_spaces()
+        mode = str(self.config.get("role_onehot_mode", "info")).lower()
+        if mode == "concat":
+            self.observation_type = RoleAugObsWrapper(self, self.observation_type)
+            self.observation_space = self.observation_type.space()
+
+    # ---------- 回合汇总 ----------
     def _print_episode_summary(self) -> None:
         if not getattr(self, "_ep_initialized", False):
             return
@@ -65,14 +112,12 @@ class MARLEnv(AbstractEnv):
 
         self._last10_team_means.append(team_mean)
         if len(self._last10_team_means) == 10:
-            start_ep = ep_no - 9
-            end_ep = ep_no
+            start_ep, end_ep = ep_no - 9, ep_no
             block_avg = float(np.mean(self._last10_team_means))
             print(f"[EP AVG] {start_ep}-{end_ep} team_mean={block_avg:.2f}")
             self._last10_team_means.clear()
 
     def _reset(self) -> None:
-        # --- 回合计数与上一回合汇总 ---
         if not hasattr(self, "_ep_count"):
             self._ep_count = 0
         if not hasattr(self, "_last10_team_means"):
@@ -82,7 +127,6 @@ class MARLEnv(AbstractEnv):
             self._ep_count += 1
             self._episode_done = False
 
-        # --- 步级与回合累计（按配置人数建形状）---
         n_cfg_agents = int(self.config["controlled_vehicles"])
         self._ep_step_idx = 0
         self._ep_return = np.zeros(n_cfg_agents, dtype=float)
@@ -94,14 +138,12 @@ class MARLEnv(AbstractEnv):
         self._ep_crash_given = np.zeros(n_cfg_agents, dtype=bool)
         self._ep_initialized = True
 
-        # --- 场景与车辆 ---
         self._create_road()
         self._create_vehicles()
 
-        # --- 车道变更记账 ---
         self._prev_lane_index = [v.lane_index for v in self.controlled_vehicles]
 
-        # --- 运动学历史（必须在造车之后初始化）---
+        # 历史
         self.time = 0.0
         self.time_history = []
         n_env_agents = len(self.controlled_vehicles)
@@ -110,28 +152,34 @@ class MARLEnv(AbstractEnv):
         self._prev_speeds = [float(v.speed) for v in self.controlled_vehicles]
         self._last_time_for_hist = 0.0
 
-
-
-
     def step(self, action):
-        """只负责记录历史；核心推进仍用父类 step。"""
         t0 = float(getattr(self, "time", 0.0))
         obs, reward, terminated, truncated, info = super().step(action)
         t1 = float(getattr(self, "time", t0))
         dt = max(1e-6, t1 - t0)
 
-        # 时间轴：用环境自己的 time
         self.time_history.append(t1)
-
-        # 逐 agent 记速度与加速度
         for i, v in enumerate(self.controlled_vehicles):
             s = float(getattr(v, "speed", 0.0))
             a = (s - self._prev_speeds[i]) / dt
             self.speed_history[f"agent_{i}"].append(s)
             self.accel_history[f"agent_{i}"].append(a)
             self._prev_speeds[i] = s
-
         self._last_time_for_hist = t1
+
+        # —— 角色 one-hot 注入到 info（默认启用，安全不改观测）——
+        mode = str(self.config.get("role_onehot_mode", "info")).lower()
+        if mode in ("info", "concat"):
+            A = len(self.controlled_vehicles)
+            roles = np.eye(A, dtype=np.float32)
+            if not isinstance(info, dict):
+                info = {}
+            for i in range(A):
+                key = f"agent_{i}"
+                if key not in info or not isinstance(info.get(key), dict):
+                    info[key] = {}
+                info[key]["role_onehot"] = roles[i]
+
         return obs, reward, terminated, truncated, info
 
     def _create_road(self) -> None:
@@ -142,9 +190,7 @@ class MARLEnv(AbstractEnv):
         )
 
     def _create_vehicles(self) -> None:
-        """优先用动作类型的车辆类创建（带边界约束）；失败再回退。"""
         other_vehicles_type = utils.class_from_path(self.config["other_vehicles_type"])
-
         vc = getattr(self.action_type, "vehicle_class", ControlledVehicle)
         base_cls = vc.func if isinstance(vc, functools.partial) else vc
 
@@ -242,7 +288,6 @@ class MARLEnv(AbstractEnv):
             self._episode_done = True
         return done
 
-    # 可选：仅为录制时抓帧，不改变动力学
     def render(self, *args, **kwargs):
         frame = super().render(*args, **kwargs)
         if getattr(self, "_record_video", False) and frame is not None:
