@@ -11,16 +11,6 @@ from utils.util import update_linear_schedule
 
 
 class RMAPPOPolicy:
-    """
-    MAPPO Policy  class. Wraps actor and critic networks to compute actions and value function predictions.
-
-    :param args: (argparse.Namespace) arguments containing relevant model and policy information.
-    :param obs_space: (gym.Space) observation space.
-    :param cent_obs_space: (gym.Space) value function input space (centralized input for MAPPO, decentralized for IPPO).
-    :param action_space: (gym.Space) action space.
-    :param device: (torch.device) specifies the device to run on (cpu/gpu).
-    """
-
     def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu")):
         self.device = device
         self.lr = args.lr
@@ -32,6 +22,21 @@ class RMAPPOPolicy:
         self.share_obs_space = cent_obs_space
         self.act_space = act_space
 
+        # === 新增：输入维度与动作空间校验 ===
+        A = int(args.num_agents)
+        obs_dim = int(self.obs_space.shape[0])                 # D'
+        share_dim = int(self.share_obs_space.shape[0])         # A * D'
+        print(f"[CHK][Policy] A={A}, actor_in(D')={obs_dim}, critic_in={share_dim}")
+        assert share_dim == A * obs_dim, "critic 输入应为 A*(actor 输入)。请检查 share_obs 构造。"
+
+        if hasattr(self.act_space, "n"):
+            print(f"[CHK][Policy] action_dim={int(self.act_space.n)}")
+            # 如需强校验 5 个离散动作，解除下一行注释
+            # assert int(self.act_space.n) == 5, "动作维度应为 5（LANE_LEFT/IDLE/LANE_RIGHT/FASTER/SLOWER）"
+        else:
+            print("[CHK][Policy] action_dim=continuous or non-discrete")
+
+        # === 原逻辑 ===
         self.actor = R_Actor(args, self.obs_space, self.act_space, self.device)
         self.critic = R_Critic(args, self.share_obs_space, self.device)
 
@@ -42,6 +47,7 @@ class RMAPPOPolicy:
                                                  lr=self.critic_lr,
                                                  eps=self.opti_eps,
                                                  weight_decay=self.weight_decay)
+
 
     def lr_decay(self, episode, episodes):
         """
