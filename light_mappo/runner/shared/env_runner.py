@@ -23,6 +23,16 @@ class EnvRunner(Runner):
 
     def __init__(self, config):
         super(EnvRunner, self).__init__(config)
+        # === dims sanity (env spaces) ===
+        obs_dim = self.envs.observation_space[0].shape[0]                 # D'
+        share_dim = self.envs.share_observation_space[0].shape[0]         # A * (D')
+        A = self.num_agents
+        print(f"[DBG][Dims] A={A}, obs_shape(D')={obs_dim}, share_obs_shape={share_dim}")
+        assert share_dim == A * obs_dim, "share_obs_shape 应为 A*(D')。请检查 PettingZooWrapper.share_observation_space"
+        # 便于后续 warmup 对比
+        self._obs_dim_dbg = int(obs_dim)
+        self._share_dim_dbg = int(share_dim)
+
 
     def run(self):
         self.warmup()
@@ -122,6 +132,14 @@ class EnvRunner(Runner):
             )  # shape = shape = [env_num, agent_num， agent_num * obs_dim]
         else:
             share_obs = obs
+
+        # === dims sanity (actual tensors) ===
+        # obs: [N_env, A, D'] ; share_obs: [N_env, A, A*D']   （集中式V下）
+        assert obs.shape[2] == self._obs_dim_dbg, \
+            f"obs最后一维应为 D'={self._obs_dim_dbg}，实际 {obs.shape[2]}"
+        assert share_obs.shape[2] == self._share_dim_dbg, \
+            f"share_obs最后一维应为 A*D'={self._share_dim_dbg}，实际 {share_obs.shape[2]}"
+        print(f"[DBG][Warmup] obs.shape={obs.shape}, share_obs.shape={share_obs.shape}")
 
         self.buffer.share_obs[0] = share_obs.copy()
         self.buffer.obs[0] = obs.copy()
@@ -372,5 +390,4 @@ class EnvRunner(Runner):
         if self.all_args.save_gifs and len(all_frames) > 0:
             os.makedirs(self.gif_dir, exist_ok=True)
             imageio.mimsave(str(self.gif_dir) + '/render.gif', all_frames, duration=self.all_args.ifi)
-
 
