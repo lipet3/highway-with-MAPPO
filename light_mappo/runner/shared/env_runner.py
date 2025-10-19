@@ -1,10 +1,3 @@
-"""
-# @Time    : 2021/7/1 7:15 下午
-# @Author  : hezhiqiang01
-# @Email   : hezhiqiang01@baidu.com
-# @File    : env_runner.py
-"""
-
 import time
 import numpy as np
 import torch
@@ -87,29 +80,7 @@ class EnvRunner(Runner):
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
-                # print(
-                #     "\n Scenario {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n".format(
-                #         self.all_args.scenario_name,
-                #         self.algorithm_name,
-                #         self.experiment_name,
-                #         episode,
-                #         episodes,
-                #         total_num_steps,
-                #         self.num_env_steps,
-                #         int(total_num_steps / (end - start)),
-                #     )
-                # )
 
-
-                # if self.env_name == "MPE":
-                #     env_infos = {}
-                #     for agent_id in range(self.num_agents):
-                #         idv_rews = []
-                #         for info in infos:
-                #             if 'individual_reward' in info[agent_id].keys():
-                #                 idv_rews.append(info[agent_id]['individual_reward'])  total num timesteps
-                #         agent_k = 'agent%i/individual_rewards' % agent_id
-                #         env_infos[agent_k] = idv_rews
 
                 train_infos["average_episode_rewards"] = np.mean(self.buffer.rewards) * self.episode_length
                 # print("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
@@ -181,13 +152,12 @@ class EnvRunner(Runner):
                 else:
                     actions_env = np.concatenate((actions_env, uc_actions_env), axis=2)
         elif self.envs.action_space[0].__class__.__name__ == "Discrete":
-            # actions  --> actions_env : shape:[10, 1] --> [5, 2, 5]
+
             actions_env = np.squeeze(np.eye(self.envs.action_space[0].n)[actions], 2)
         else:
-            # TODO 这里改造成自己环境需要的形式即可
-            # TODO Here, you can change the shape of actions_env to fit your environment
+
             actions_env = actions
-            # raise NotImplementedError
+
 
         return (
             values,
