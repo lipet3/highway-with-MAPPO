@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import os, sys, numpy as np, torch
 from pathlib import Path
 
@@ -14,7 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-DEFAULT_RUN_DIR = r"C:\Users\z8603\Desktop\study\highway with mappo\light_mappo\results\HighwayEnv\highway\mappo\check\run10"
+DEFAULT_RUN_DIR = r"C:\Users\z8603\Desktop\study\highway with mappo\light_mappo\results\HighwayEnv\highway\mappo\check\run6"
 OUT_DIR = "videos"
 TRAIN_ACTIONS = ["LANE_LEFT", "IDLE", "LANE_RIGHT", "FASTER", "SLOWER"]
 
@@ -252,4 +255,3 @@ def main(argv):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-
