@@ -1,3 +1,5 @@
+# 文件名: light_mappo/envs/env_pettingzoo_highway.py
+
 from pettingzoo.utils import ParallelEnv
 from gymnasium import spaces
 import numpy as np
@@ -48,6 +50,48 @@ class HighwayParallelEnv(ParallelEnv):
         }
         infos = {agent: info.get(agent, {}) for agent in self.agents}
         return observations, infos
+
+
+    def available_actions(self):
+        """
+        返回 dict[agent_id] -> (n_actions,) 的 0/1 掩码。
+        最小实现：基于车道边界禁用 LANE_LEFT/RIGHT；其余动作默认可用。
+        （你愿意的话，可再按速度上/下限禁用 FASTER/SLOWER）
+        """
+        masks = {}
+        # 取某个 agent 的离散动作维度
+        some_agent = self.possible_agents[0]
+        n_actions = self.action_spaces[some_agent].n
+
+        # 尝试取底层 HighwayEnv 的受控车与配置
+        try:
+            base_env = getattr(self, "env", None)
+            lanes = int(getattr(base_env, "config", {}).get("lanes_count", 3))
+            controlled = getattr(base_env, "controlled_vehicles", [])
+        except Exception:
+            base_env, lanes, controlled = None, 3, []
+
+        for idx, agent in enumerate(self.possible_agents):
+            m = np.ones((n_actions,), dtype=np.float32)
+            try:
+                veh = controlled[idx] if idx < len(controlled) else None
+                lane = getattr(veh, "lane_index", (None, None, None))[2] if veh is not None else None
+                if lane is not None:
+                    # 约定：动作索引 0: LANE_LEFT, 2: LANE_RIGHT
+                    if lane <= 0:
+                        m[0] = 0.0
+                    if lane >= lanes - 1:
+                        m[2] = 0.0
+                # （可选）基于车速上/下限屏蔽 3:FASTER / 4:SLOWER
+                # vmax = base_env.config.get("reward_speed_range", [0, 30])[1] if base_env else 30
+                # spd  = getattr(veh, "speed", 0.0) if veh is not None else 0.0
+                # if spd >= vmax: m[3] = 0.0
+                # if spd <= 0.0:  m[4] = 0.0
+            except Exception:
+                pass
+            masks[agent] = m
+        return masks
+
 
     def step(self, actions):
         action_tuple = tuple(actions[agent] for agent in self.agents)
@@ -104,7 +148,4 @@ class HighwayParallelEnv(ParallelEnv):
 
     def action_space(self, agent):
         return self.action_spaces[agent]
-
-
-
 
