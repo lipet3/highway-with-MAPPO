@@ -1,5 +1,5 @@
 import numpy as np
-from envs.env_pettingzoo_highway import HighwayParallelEnv
+from light_mappo.envs.env_pettingzoo_highway import HighwayParallelEnv
 from gym import spaces
 
 class PettingZooWrapper:
@@ -96,6 +96,25 @@ class PettingZooWrapper:
         self._check_tail(obs, when="step")
 
         return obs, rewards, dones, infos
+
+    def available_actions(self):
+        """
+        返回 (A, n_actions) 的 0/1 矩阵，按 agents 行顺序对齐。
+        需要底层 ParallelEnv 暴露 available_actions()。
+        """
+        masks_dict = self.env.available_actions()
+        order = self.agents  # 或 self.env.possible_agents
+        mats = [masks_dict[a] for a in order]
+        return np.stack(mats, axis=0).astype(np.float32)
+
+    def get_state(self, obs_mat):
+        """
+        QMIX 的全局 state。直接将 (A,D') 的 obs 拼成 (A*D',)。
+        （Runner 里已自己拼了，这个方法可选）
+        """
+        return obs_mat.reshape(-1).astype(np.float32)
+
+
 
     def render(self, mode="human"):
         return self.env.render()
