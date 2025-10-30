@@ -1,0 +1,41 @@
+import argparse
+import numpy as np
+from light_mappo.envs.env_wrapper_for_pettingzoo import PettingZooWrapper
+from light_mappo.algorithms.masac_discrete.buffer import ReplayBufferDMASAC
+from light_mappo.algorithms.masac_discrete.policy import DMASACPolicy
+from light_mappo.runner.masac_discrete.runner_masac import RunnerDMASAC
+
+def make_env(num_agents, render_mode=None):
+    return PettingZooWrapper(num_agents=num_agents, render_mode=render_mode, debug=False)
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--num_agents", type=int, default=3)
+    ap.add_argument("--episode_length", type=int, default=200)
+    ap.add_argument("--train_iters", type=int, default=2000)
+    ap.add_argument("--buffer_size", type=int, default=50000)
+    ap.add_argument("--batch_size", type=int, default=256)
+    ap.add_argument("--update_per_step", type=int, default=1)
+    ap.add_argument("--gamma", type=float, default=0.99)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--target_tau", type=float, default=0.005)
+    ap.add_argument("--hidden_dim", type=int, default=256)
+    ap.add_argument("--save_interval", type=int, default=1000)  # 新增参数：保存间隔
+    args = ap.parse_args()
+
+    env = make_env(args.num_agents)
+    A  = args.num_agents
+    Dp = env.observation_space[0].shape[0]
+    NA = env.action_space[0].n
+
+    args.obs_shape   = Dp
+    args.state_shape = A * Dp
+    args.n_actions   = NA
+
+    policy = DMASACPolicy(args)
+    buffer = ReplayBufferDMASAC(args.buffer_size, A, Dp, args.state_shape, NA)
+    runner = RunnerDMASAC(env, policy, buffer, args, logger=None)
+    runner.train()
+
+if __name__ == "__main__":
+    main()
