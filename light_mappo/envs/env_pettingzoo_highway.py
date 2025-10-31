@@ -55,9 +55,61 @@ class HighwayParallelEnv(ParallelEnv):
     def available_actions(self):
         """
         返回 dict[agent_id] -> (n_actions,) 的 0/1 掩码。
-        最小实现：基于车道边界禁用 LANE_LEFT/RIGHT；其余动作默认可用。
-        （你愿意的话，可再按速度上/下限禁用 FASTER/SLOWER）
+        优先转发底层 MARLEnv.available_actions()；若不可用，回退到基于车道边界的掩码。
         """
+        # ===== 1) 优先：转发底层 MARLEnv.available_actions() =====
+        try:
+            # 递归剥壳找到真实的 MARLEnv
+            marl_env = None
+            env_stack = [getattr(self, "env", None)]
+            seen = set()
+            
+            while env_stack:
+                current = env_stack.pop()
+                if current is None or id(current) in seen:
+                    continue
+                seen.add(id(current))
+                
+                # 检查是否是 MARLEnv（有 _get_available_actions 或 available_actions 方法）
+                if hasattr(current, "_get_available_actions") or (
+                    hasattr(current, "available_actions") and 
+                    hasattr(current, "controlled_vehicles") and
+                    hasattr(current, "config")
+                ):
+                    marl_env = current
+                    break
+                
+                # 继续剥壳
+                for attr_name in ["env", "unwrapped", "wrapped_env", "_env"]:
+                    if hasattr(current, attr_name):
+                        next_env = getattr(current, attr_name)
+                        if next_env is not None:
+                            env_stack.append(next_env)
+            
+            # 如果找到了 MARLEnv，使用它的 available_actions
+            if marl_env is not None and hasattr(marl_env, "available_actions"):
+                masks_dict = marl_env.available_actions()
+                if isinstance(masks_dict, dict) and len(masks_dict) > 0:
+                    # 确保所有 agent 都有掩码
+                    out = {}
+                    for agent in self.possible_agents:
+                        if agent in masks_dict:
+                            out[agent] = np.asarray(masks_dict[agent], dtype=np.float32)
+                        else:
+                            # 如果某个 agent 缺失，用全 1 填充
+                            n_actions = self.action_spaces[agent].n
+                            out[agent] = np.ones((n_actions,), dtype=np.float32)
+                    return out
+        except Exception as e:
+            # 调试：打印异常信息（仅在首次调用时）
+            if not hasattr(self, "_mask_debug_printed"):
+                print(f"[WARN] HighwayParallelEnv failed to forward masks from MARLEnv: {e}")
+                import traceback
+                traceback.print_exc()
+                self._mask_debug_printed = True
+            pass  # 转发失败则进入回退逻辑
+
+        # ===== 2) 回退：基于车道边界生成掩码 =====
         masks = {}
         # 取某个 agent 的离散动作维度
         some_agent = self.possible_agents[0]
@@ -66,6 +118,8 @@ class HighwayParallelEnv(ParallelEnv):
         # 尝试取底层 HighwayEnv 的受控车与配置
         try:
             base_env = getattr(self, "env", None)
+            if hasattr(base_env, "env"):
+                base_env = base_env.env
             lanes = int(getattr(base_env, "config", {}).get("lanes_count", 3))
             controlled = getattr(base_env, "controlled_vehicles", [])
         except Exception:
