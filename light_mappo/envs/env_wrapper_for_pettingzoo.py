@@ -99,13 +99,83 @@ class PettingZooWrapper:
 
     def available_actions(self):
         """
-        返回 (A, n_actions) 的 0/1 矩阵，按 agents 行顺序对齐。
-        需要底层 ParallelEnv 暴露 available_actions()。
+        返回 (A, n_actions) 的 0/1 掩码矩阵（与 self.agents 顺序对齐）。
+        优先转发底层 env.available_actions()；若不可用，则按“快车道禁左、慢车道禁右”
+        的规则在包装器内合成。任何拿不到的信息时回退为全 1。
         """
-        masks_dict = self.env.available_actions()
-        order = self.agents  # 或 self.env.possible_agents
-        mats = [masks_dict[a] for a in order]
-        return np.stack(mats, axis=0).astype(np.float32)
+        import numpy as np
+
+        # ===== 1) 优先：转发底层的 available_actions() =====
+        try:
+            masks_dict = self.env.available_actions()  # {agent_id: (n_actions,)}
+            order = getattr(self, "agents", getattr(self.env, "agents", None)) or list(masks_dict.keys())
+            mats = [np.asarray(masks_dict[a], dtype=np.float32) for a in order]
+            mat = np.stack(mats, axis=0).astype(np.float32)
+
+            # 形状兜底（与包装器动作空间对齐）
+            try:
+                na = int(self.action_space[0].n)
+                if mat.shape[1] < na:  # 右侧用 1 填充（全可用）
+                    pad = np.ones((mat.shape[0], na - mat.shape[1]), dtype=np.float32)
+                    mat = np.concatenate([mat, pad], axis=1)
+                elif mat.shape[1] > na:
+                    mat = mat[:, :na]
+            except Exception:
+                pass
+            return mat
+        except Exception:
+            pass  # 转发失败则进入回退逻辑
+
+        # ===== 2) 回退：本地基于车道规则合成掩码 =====
+        core = getattr(self, "_core_env", None) or getattr(self, "env", None)
+        # 拿不到必要信息就全 1 返回，确保对其它算法 0 影响
+        try:
+            actions = list(getattr(getattr(core, "action_type", None), "actions",
+                                   ["LANE_LEFT", "IDLE", "LANE_RIGHT", "FASTER", "SLOWER"]))
+            idx = {name: i for i, name in enumerate(actions)}
+            i_left = idx.get("LANE_LEFT", None)
+            i_right = idx.get("LANE_RIGHT", None)
+
+            A = len(getattr(core, "controlled_vehicles", [])) or int(getattr(self, "num_agents", 0))
+            NA = len(actions)
+            mask = np.ones((A, NA), dtype=np.float32)
+
+            fast_id = int(getattr(core, "config", {}).get("fast_lane_id", 0))
+            slow_id = int(getattr(core, "config", {}).get("slow_lane_id", 1))
+
+            for i, v in enumerate(getattr(core, "controlled_vehicles", [])):
+                lane = getattr(v, "lane_index", (0, 1, slow_id))
+                lid = lane[2] if isinstance(lane, (list, tuple)) and len(lane) >= 3 else slow_id
+                if lid == fast_id and i_left is not None:
+                    mask[i, i_left] = 0.0  # 快车道禁左
+                if lid == slow_id and i_right is not None:
+                    mask[i, i_right] = 0.0  # 慢车道禁右
+
+            # 与包装器动作空间对齐
+            try:
+                na = int(self.action_space[0].n)
+                if NA < na:
+                    pad = np.ones((A, na - NA), dtype=np.float32)
+                    mask = np.concatenate([mask, pad], axis=1)
+                elif NA > na:
+                    mask = mask[:, :na]
+            except Exception:
+                pass
+
+            # 若上面循环一个车都没取到，回退全 1
+            if mask.size == 0 or A == 0:
+                na = int(getattr(self.action_space[0], "n", NA))
+                return np.ones((int(getattr(self, "num_agents", 1)), na), dtype=np.float32)
+
+            return mask
+        except Exception:
+            # 最终兜底：全 1（不改变任何现有算法行为）
+            try:
+                A = int(getattr(self, "num_agents", 1))
+                na = int(self.action_space[0].n)
+            except Exception:
+                A, na = 1, len(actions) if 'actions' in locals() else 5
+            return np.ones((A, na), dtype=np.float32)
 
     def get_state(self, obs_mat):
         """
