@@ -79,6 +79,7 @@ class MARLEnv(AbstractEnv):
                             "observation_config": {"type": "Kinematics"}},
             "action": {"type": "MultiAgentAction",
                        "action_config": {"type": "DiscreteMetaAction"}},
+
             "lanes_count": 2,
             "vehicles_count": 1,  # 仅 1 辆 HDV
             "controlled_vehicles": 3,
@@ -119,7 +120,7 @@ class MARLEnv(AbstractEnv):
 
             # === 奖励权重与阈值 ===
             "w_speed": 3.0,
-            "w_low": 1.0,
+            "w_low": 5.0,  #如果是1 那么0车会选择慢速
             "v_min": 25.0,
             "v_max": 30.0,
             "v_low": 20.0,
@@ -128,7 +129,7 @@ class MARLEnv(AbstractEnv):
             "pass_bonus": 10.0,
             "team_success_bonus": 300.0,
             # === 协同安全奖励 (Time Gap) ===
-            "w_safe_tg": 5,  # 协同安全奖励的全局缩放权重
+            "w_safe_tg": 1,  # 协同安全奖励的全局缩放权重
             "tg_danger_threshold": 1.2,  # 危险时间间隙的阈值 (秒)
 
         })
@@ -394,8 +395,9 @@ class MARLEnv(AbstractEnv):
         score = 0.0
         if time_gap < T1:
             score = -min(1.0, (T1 - max(time_gap, 0.0)) / T1)
+        # 不同车道时乘以0.2权重
         if not is_same_lane:
-            score = min(0.0, score)
+            score = score * 0.2
         return score
 
     def _calculate_cooperative_safety_reward(self):
@@ -412,9 +414,7 @@ class MARLEnv(AbstractEnv):
                 else:
                     front, rear, f_idx, r_idx = vj, vi, j, i
 
-                if rear.lane_index == self._prev_lane_index[r_idx]:
-                    continue
-
+                # 全程都考虑TG，不再仅在变道时计算
                 rear_lane = self.road.network.get_lane(rear.lane_index)
                 s_rear = float(rear_lane.local_coordinates(rear.position)[0])
                 s_front = float(rear_lane.local_coordinates(front.position)[0])
